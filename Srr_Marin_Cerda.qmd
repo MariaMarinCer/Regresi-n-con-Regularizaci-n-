@@ -1,0 +1,165 @@
+---
+title: "TRABAJO DE EVALUACIÓN (Regresión con regularización)"
+author: "María Marín Cerdá"
+format: pdf
+editor: visual
+---
+
+### Carga de datos
+
+```{r}
+library(readr)
+datos = read.csv("dataworkMASTER.csv",sep=";",header=TRUE)   
+dim(datos) 
+names(datos) 
+str(datos) 
+datos=datos[,-1]  # Eliminación de la variable código Cod_Id
+```
+
+### Preparación del conjunto de datos
+
+```{r}
+a=3
+b=0
+c=5
+d=9
+elim=c(10+a, 10+b, 20+c, 30+d) 
+datos=datos[,-elim]
+
+```
+
+Trabajaremos con 4000 observaciones y 37 variables.
+
+## Ejercicio 1
+
+::: callout-note
+Obtener el modelo de regresión múltiple de la variable `varobj` frente al resto de variables. Analizar el problema de multicolinealidad.
+:::
+
+Construimos el modelo de regresión lineal múltiple.
+
+```{r}
+regre<-lm(varobj~.,data=datos)
+summary(regre)
+```
+
+Observamos que existen variables no significativas para el modelo y que el valor de $R^2$ es bastante alto. Estudiaremos si es debido a que el modelo es bastante bueno o si existe un problema de multicolinealidad.
+
+```{r}
+str(datos)
+```
+
+Como todas las variables son cuantitativas, podemos calcular la matriz de correlación.
+
+```{r}
+mx<-datos[,-1]
+
+(mat_cor<-cor(mx))
+det(mat_cor)
+```
+
+Observamos que existen varias variables altamente correladas y que el determinante de la matriz es muy cercano a 0. Veamos un gráfico para tener una idea más visual.
+
+```{r}
+library(corrplot)
+corrplot(mat_cor,method="ellipse")
+```
+
+Efectivamente, como vimos en la matriz, existen variables altamente correladas como pueden ser las variables $X_{01}$ y $X_{04}$; y otras, que en cambio, es prácticamente 0.
+
+Otra medida para detectar multicolinealidad, es el coeficiente VIF (variance inflaction factor) de una variable predictora $X_i$. El VIF para una variable $X_i$ se define como\
+$$VIF(X_i)= \displaystyle\frac{1}{1-R_i^2}$$ siendo $R_i^2=R^2[X_i;X_1,X_2, \dots, X_{i-1}, X_{i+1}, \dots, X_p]$, es decir, el coeficiente de determinación del modelo lineal de la variable $X_i$ frente a las demás. Un valor $R_i^2$ alto, significará que la variable $X_i$ es explicada por las demás. En conclusión, si VIF es alto (superior a 10) se dice que hay multicolinealidad muy alta.
+
+```{r}
+#install.packages("usdm")
+library(usdm)
+vif(mx)
+```
+
+Las variables que tienen un VIF superior a 10 son las variables $X_{04},X_{07},X_{10}$ y $X_{11}$ cuyos valores son 26.188206, 21.696898, 10.085224 y 10.123466 respectivamente.
+
+Como hay multicolinealidad, es razonable aplicar métodos de regularización.
+
+## Ejercicio 2
+
+::: callout-note
+Aplicar la técnica de regularización elasticnet a través de la librería `glmnet`, para los valores de $\alpha$ en la colección $\{0, 0.1, 0.2, 0.3 … 0.9, 1.0\}$ seleccionando el mejor par ($\alpha$,$\lambda$) por validación cruzada.
+:::
+
+Procedamos a aplicar la técnica elasticnet, una técnica de mixtura entre la regularización Lasso y Ridge. Para ello utilizaremos la función `cv.glmnet` que realiza validación cruzada con $k$ pliegues, proporciona un gráfico y un valor óptimo para $\lambda$ dado un valor de $\alpha$.
+
+```{r}
+set.seed(123)
+#install.packages("glmnet")
+library(glmnet)
+mx<-as.matrix(mx)
+my<-as.matrix(datos[,1])
+
+mod_0<-cv.glmnet(mx,my,keep=TRUE,alpha=0)
+```
+
+Para $\alpha=0$ la regularización que se aplica es la de Ridge. Por eso no se seleccionan variables y para todos los valores de $\lambda$ los coeficientes de todas las variables son distinta de 0.
+
+```{r}
+mod_0$nzero
+```
+
+Se seleccionan las 36 variables independientes.
+
+```{r}
+mod_0
+```
+
+Observamos que obtenemos $\lambda_{min}=0.5911$ que minimiza el error con $MSE=12.98$. El otro valor que aparece, $\lambda_{1se}=0.7119$, es el $\lambda$ más grande que está dentro de $\tiny\stackrel{+}{-}$ una desviación estándar del error mínimo. Es decir, que desde el punto de vista estadístico, el error es el mismo. Por lo tanto, seleccionaremos el valor de $\lambda_{1se}$ pues al ser mayor reduce aún más la influencia de variables correladas y con el "mismo" error.
+
+Vamos a crear un bucle que calcule el mejor $\lambda$ para los distintos valores de $\alpha$ y tomaremos de nuevo $\lambda_{1se}$. Como $\alpha$ será mayor que 0, entrará en juego la regularización de tipo Lasso, y se procederá a seleccionar variables. El valor de $\lambda_{1se}$ aportaría la misma información seleccionando menos variables por lo que reduciría la complejidad del modelo.
+
+```{r}
+lista_alpha=(0)
+lista_lambda=(mod_0$lambda.1se)
+lista_error=(mod_0$cvm[mod_0$lambda == mod_0$lambda.1se])
+for (a in seq(0.1,1,0.1)) {
+  mod<-cv.glmnet(mx,my,keep=TRUE,alpha=a)
+  lista_alpha<-append(lista_alpha,a)
+  lista_lambda<-append(lista_lambda,mod$lambda.1se)
+  lista_error<-append(lista_error,mod$cvm[mod$lambda == mod$lambda.1se])
+  
+}
+info<-cbind(alpha=lista_alpha,lambda=lista_lambda,error=lista_error)
+```
+
+El valor de $\alpha$ que minimiza el error es $0.7$. Procedamos a construir el modelo con dichos parámetros.
+
+```{r}
+
+best_model<-glmnet(mx,my,keep=TRUE,alpha=0.7,lambda= 0.09708317)
+
+```
+
+## Ejercicio 3
+
+::: callout-note
+Realizar un resumen del modelo obtenido, comparando los resultados con los obtenidos a través del modelo de regresión múltiple.
+:::
+
+```{r}
+best_model$df
+```
+
+Se han seleccionado 25 variables. Veamos los valores estimados para cada $\beta_i$.
+
+```{r}
+best_model$beta
+```
+
+Dos de las variables que presentaban una alta correlación eran $X_{04}$ y $X_{07}$. Observamos que en el modelo de regularización se descarta la variable $X_{07}$. Otras dos variables que presentaban una alta correlación eran $X_{10}$ y $X_{11}$. En esta ocasión se seleccionan ambas variables pero el estimador $\hat\beta_{11}$ toma un valor cercano a cero. Por tanto, los resultados obtenidos por el modelo de regularización son bastante coherentes, ya que casi no tiene en cuenta las variables que producen multicolinealidad.
+
+Calculemos el coeficiente $R^{2}$ asociado a cada uno de los modelos y comparemos los resultados.
+
+```{r}
+summary(regre)$r.squared
+best_model$dev.ratio
+
+```
+
+El modelo de regresión lineal con todas las variables presenta un $R^2$ de $0.9137753$, mientras que el modelo `elastic net`, considerando menos variables, obtiene un $R^2$ de $0.9122242$. Podemos concluir por lo tanto, que en el modelo de regresión con regularización hemos podido penalizar a aquellas variables que presentaban problemas de multicolinealidad y que eran menos significativas con un decrecimiento del $R^2$ despreciable.
